@@ -129,10 +129,14 @@ public:
 private:
     void parseRequestFrame(uint8_t dataLen);
     uint8_t calculateCRC(const uint8_t *data, size_t len);
-    CommandManager* _cmdMgr;
+    static constexpr uint8_t HEADER = 0xAA;
+    static constexpr uint8_t FOOTER = 0x55;
+    static constexpr size_t MAX_LENGH_COMMAND_BUFFER = 256;
+    static constexpr size_t FRAME_OVERHEAD = 6;
     uint8_t _id;
-    std::array<uint8_t, MAX_LENGH_COMMAND_BUFFER> commandBuffer;
-    uint8_t _bytesRead;
+    CommandManager* _cmdMgr;
+    size_t _bytesRead{0};
+    std::array<uint8_t, MAX_LENGH_COMMAND_BUFFER> commandBuffer{};
 };
 
 #endif //UNTITLED3_COMMANDMANAGER_HPP

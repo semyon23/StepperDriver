@@ -16,8 +16,8 @@ void CommandManager::addCommand(uint8_t id_cmd, CommandCallback cmd) {
     commands[id_cmd] = std::move(cmd);
 }
 
-ProtocolHandler::ProtocolHandler(CommandManager* cmdMgr, uint8_t ID)
-    : _cmdMgr(cmdMgr), _id(ID)
+ProtocolHandler::ProtocolHandler(CommandManager* cmdMgr, uint8_t id)
+    : _cmdMgr(cmdMgr), _id(id)
 {
     commandBuffer.fill(0);
     _bytesRead = 0;
@@ -33,28 +33,28 @@ uint8_t ProtocolHandler::getId() const {
 }
 
 void ProtocolHandler::processReadByte(uint8_t byte) {
-
-    if (_bytesRead == 0 && byte != 0xAA) return;
+    if (_bytesRead == 0 && byte != HEADER) return;
 
     if (_bytesRead == 1 && byte != _id) {
-        _bytesRead = 0;
+        _bytesRead = (byte == HEADER) ? 1 : 0;
         return;
     }
 
+    if (_bytesRead == 3 && byte > (MAX_LENGH_COMMAND_BUFFER - FRAME_OVERHEAD)) {
+        _bytesRead = 0;
+        return;
+    }
     commandBuffer[_bytesRead++] = byte;
 
-    // Frame = Header(1) + ID(1) + Cmd(1) + Len(1) + Data(N) + CRC(1) + Stop(1)
     if (_bytesRead > 3) {
         uint8_t dataLen = commandBuffer[3];
         size_t totalFrameSize = 6 + dataLen;
 
         if (_bytesRead == totalFrameSize) {
-            if (byte == 0x55) {
-
+            if (byte == FOOTER) {
                 this->parseRequestFrame(dataLen);
             }
             _bytesRead = 0;
-            commandBuffer.fill(0);
         }
     }
 }
