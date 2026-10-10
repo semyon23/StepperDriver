@@ -34,6 +34,7 @@ namespace MotionProfile {
         int64_t perCycle2(float perSecond2) const;
         int64_t brakingDistance(int64_t v) const;
         bool canStop(int64_t v, int64_t remaining) const;
+        int64_t maxStoppableSpeed(int64_t r, int64_t limit) const;
         void runDiscrete();
         void rampVelocity(int64_t target, int64_t up, int64_t down);
         void setTarget(int64_t target);
