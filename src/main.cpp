@@ -303,6 +303,20 @@ void registerCommands() {
         protocolHandler.sendFrame(rawPkg, pkgSize);
     });
 
+    CmdManager.addCommand(COMMAND::EMERGENCY_STOP, [&](const uint8_t* data, size_t len) {
+            if (len < sizeof(CommandData)) return;
+
+            auto* cmd = reinterpret_cast<const CommandData*>(data);
+            Controller.hardStop(cmd);
+            auto status = Controller.getAxesInfo();
+
+            auto pkg = protocolHandler.createFrame(COMMAND::EMERGENCY_STOP, status);
+            uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+            size_t pkgSize = sizeof(pkg);
+            protocolHandler.sendFrame(rawPkg, pkgSize);
+        });
+
+
     CmdManager.addCommand(COMMAND::GET_FEEDBACK, [&](const uint8_t* data, size_t len) {
         if (len < 1) return;
         auto info = Controller.getAxesFeedback();

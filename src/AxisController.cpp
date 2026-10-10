@@ -1,266 +1,14 @@
 #include "../include/AxisController.hpp"
-#include "../include/AxisHardware.hpp"
 
-DisabledState AxisControl::Disabled;
-StandstillState AxisControl::Standstill;
-DiscreteMotionState AxisControl::DiscreteMotion;
-ContinueMotionState AxisControl::ContinueMotion;
-StoppingState AxisControl::Stopping;
-ErrorState AxisControl::StateError;
-HomingState AxisControl::Homing;
-
-
-////=========Disable============================
-void DisabledState::action(AxisControl* axis) {
-    axis->stateId = AxisStateId::DISABLED;
-    axis->Hardware->setEnable(true);
-}
-void DisabledState::setup(AxisControl *axis) {
-
+static bool validDynamics(float vel, float acc, float dec) {
+    return std::isfinite(vel) && std::isfinite(acc) && std::isfinite(dec)
+        && vel > 0.0f && acc > 0.0f && dec > 0.0f;
 }
 
-////=========DiscreteMotion============================
-void DiscreteMotionState::setup(AxisControl *axis) {
-
-    // float max_vel = axis->SoftwareLimit.velocity;
-    // float max_acc = axis->SoftwareLimit.acceleration;
-    // float max_dec = axis->SoftwareLimit.deceleration;
-
-    float vel = axis->moveSettings.velocity;
-    float acc = axis->moveSettings.acceleration;
-    float dec = axis->moveSettings.deceleration;
-
-    float targetPos = axis->moveSettings.distance;
-    axis->softwareLimitViolation = false;
-
-    // if (axis->moveSettings.distance > axis->SoftwareLimit.maxPosition) {
-    //     axis->softwareLimitViolation = true;
-    //     targetPos = axis->SoftwareLimit.maxPosition;
-    // } else if (axis->moveSettings.distance < axis->SoftwareLimit.minPosition) {
-    //     axis->softwareLimitViolation = true;
-    //     targetPos = axis->SoftwareLimit.minPosition;
-    // }
-
-    axis->getPlanner().setPosition(targetPos);
-    axis->getPlanner().setVelocity(vel);
-    axis->getPlanner().setAcceleration(acc);
-    axis->getPlanner().setDeceleration(dec);
-    axis->getPlanner().setPosition(targetPos);
-    // axis->getPlanner().setVelocity(std::max(0.0f, std::min(vel, max_vel)));
-    // axis->getPlanner().setAcceleration(std::max(0.0f, std::min(acc, max_acc)));
-    // axis->getPlanner().setDeceleration(std::max(0.0f, std::min(dec, max_dec)));
-
-    axis->getPlanner().generate_profile();
-}
-
-void DiscreteMotionState::action(AxisControl* axis) {
-
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    } else if (axis->isHardwareLimitTriggered()) {
-        axis->getPlanner().hard_stop_profile();
-        axis->setState(&AxisControl::StateError);
-    } else if (!axis->getPlanner().inMotion() && axis->isTargetReached()) {
-        if (axis->isTargetOutOfBounds()) {
-            axis->setState(&AxisControl::StateError);
-        }else {
-            axis->move_done = true;
-            axis->setState(&AxisControl::Standstill);
-        }
-    }else {
-        axis->stateId = AxisStateId::DISCRETE_MOTION;
-    }
-}
-
-////=========ContinueMotion============================
-void ContinueMotionState::setup(AxisControl *axis) {
-    // auto max_vel = axis->SoftwareLimit.velocity;
-    // auto max_acc = axis->SoftwareLimit.acceleration;
-
-    auto vel = axis->moveSettings.velocity;
-    auto acc = axis->moveSettings.acceleration;
-    auto dir = axis->moveSettings.direction;
-
-
-
-    axis->getPlanner().setVelocity(vel);
-    axis->getPlanner().setAcceleration(acc);
-    // axis->getPlanner().setVelocity(std::clamp(vel, 0.0f, max_vel));
-    // axis->getPlanner().setAcceleration(std::clamp(acc, 0.0f, max_acc));
-    axis->getPlanner().setDirection(dir);
-
-    axis->getPlanner().continue_profile();
-}
-
-void ContinueMotionState::action(AxisControl* axis) {
-
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    }else if (axis->isHardwareLimitTriggered() || axis->isBrakingBoundaryViolated()) {
-        //axis->moveSettings.deceleration = axis->SoftwareLimit.deceleration;
-        axis->moveSettings.deceleration = axis->moveSettings.acceleration ;
-        axis->getPlanner().setDeceleration(axis->moveSettings.deceleration);
-        axis->getPlanner().stop_profile();
-        axis->setState(&AxisControl::StateError);
-    }else {
-        axis->stateId = AxisStateId::CONTINUE_MOTION;
-    }
-}
-
-////=========StoppingState============================
-void StoppingState::setup(AxisControl *axis) {
-   // auto max_dec = axis->SoftwareLimit.deceleration;
-    auto dec = axis->moveSettings.deceleration;
-    axis->getPlanner().setDeceleration(dec);
-    //axis->getPlanner().setDeceleration(std::clamp(dec, 0.0f, max_dec));
-    axis->getPlanner().stop_profile();
-}
-
-void StoppingState::action(AxisControl* axis) {
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    }else if (!axis->getPlanner().inMotion()) {
-        axis->move_done = true;
-        axis->setState(&AxisControl::Standstill);
-    }else {
-        axis->stateId = AxisStateId::STOPPING;
-    }
-}
-
-////=========HomingState==========================
-void HomingState::setup(AxisControl *axis) {
-    axis->homingStage = 0;
-    axis->homingTimer = 0.0f;
-    if (axis->HomingConfig.mode == HOMING_MODE::DIRECT_HOME) {
-        return;
-    }
-    int8_t dir = 1;
-
-    if (axis->HomingConfig.mode == HOMING_MODE::NEGATIVE_LIMIT) {
-        dir = -1;
-    }
-    axis->backDir = -dir;
-
-    axis->getPlanner().setDirection(dir);
-    axis->getPlanner().setVelocity(axis->HomingConfig.velocity);
-    axis->getPlanner().setAcceleration(axis->HomingConfig.acceleration);
-    axis->getPlanner().setDeceleration(axis->HomingConfig.acceleration);
-    axis->getPlanner().continue_profile();
-}
-
-void HomingState::action(AxisControl *axis) {
-
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    } else {
-        axis->stateId = AxisStateId::HOMING;
-    }
-
-    auto mode = axis->HomingConfig.mode;
-
-    bool sensor = false;
-    if (mode == HOMING_MODE::DIRECT_HOME) {
-        axis->resetPosition(axis->HomingConfig.position_offset);
-        axis->setState(&AxisControl::Standstill);
-        axis->isHomingEnabled = true;
-        return;
-    } else if (mode == HOMING_MODE::NEGATIVE_LIMIT) {
-        sensor = axis->negativeLimitSwitchActive();
-    } else if (mode == HOMING_MODE::POSITIVE_LIMIT) {
-        sensor = axis->positiveLimitSwitchActive();
-    }
-
-    switch (axis->homingStage) {
-        case 0:
-            if (sensor) {
-                axis->getPlanner().setDirection(axis->backDir);
-
-                axis->getPlanner().setVelocity(axis->HomingConfig.crowl_velocity);
-                axis->getPlanner().setDeceleration(axis->HomingConfig.acceleration);
-                axis->getPlanner().continue_profile();
-                axis->homingStage = 1 ;
-                axis->homingTimer = 0;
-                axis->HomingConfig.timeout = 3;
-            }else {
-                axis->homingTimer += axis->ct;
-                if (axis->homingTimer >= axis->HomingConfig.timeout) {
-                    axis->error_id = ERROR_ID::HOMING_TIMEOUT;
-                    axis->getPlanner().hard_stop_profile();
-                    axis->setState(&AxisControl::StateError);
-                }
-            }
-            break;
-        case 1:
-            if (!sensor) {
-                axis->getPlanner().setDeceleration(axis->HomingConfig.acceleration);
-                axis->getPlanner().stop_profile();
-                axis->homingStage = 2;
-            }else {
-                axis->homingTimer += axis->ct;
-                if (axis->homingTimer >= axis->HomingConfig.timeout) {
-                    axis->error_id = ERROR_ID::HOMING_TIMEOUT;
-                    axis->getPlanner().hard_stop_profile();
-                    axis->setState(&AxisControl::StateError);
-                }
-            }
-            break;
-
-        case 2:
-            if (!axis->getPlanner().inMotion()) {
-                axis->resetPosition(axis->HomingConfig.position_offset);
-                axis->setState(&AxisControl::Standstill);
-                axis->isHomingEnabled = true;
-            }
-            break;
-    }
-}
-////=========ErrorState===========================
-void ErrorState::setup(AxisControl *axis) {
-    axis->error = true;
-
-}
-
-void ErrorState::action(AxisControl *axis) {
-    axis->stateId = AxisStateId::ERROR;
-    if (axis->reset) {
-        if (axis->enable) {
-            axis->setState(&AxisControl::Standstill);
-        }else {
-            axis->setState(&AxisControl::Disabled);
-        }
-    }
-}
-void ErrorState::cleanup(AxisControl *axis) {
-    axis->error = false;
-    axis->reset = false;
-    axis->error_id = ERROR_ID::NO_ERROR;
-}
-
-////=========Standstill==========================
-void StandstillState::action(AxisControl *axis) {
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    }else {
-        axis->stateId = AxisStateId::STANDSTILL;
-    }
-}
-
-void StandstillState::setup(AxisControl *axis) {
-    axis->Hardware->setEnable(false);
-
-}
-
-////=========================================================
 AxisControl::AxisControl(uint8_t id, AxisHardware* hw, AxisLimitSwitch* ls, float cycleTime, float tickRate, bool invertDir)
         :axisId(id), Hardware(hw), LimitSwitch(ls), ct(cycleTime), MotionPlanner(cycleTime),
         pulseDriver(hw,tickRate, cycleTime, invertDir),  invertDirection(invertDir) {
     this->currentState = &Disabled;
-
-    // SoftwareLimit.minPosition = -100000.0f;
-    // SoftwareLimit.maxPosition = 100000.0f;
-    // SoftwareLimit.velocity = 1000000000.0f;
-    // SoftwareLimit.acceleration = 1000000000.0f;
-    // SoftwareLimit.deceleration = 1000000000.0f;
 
     HomingConfig.mode = HOMING_MODE::DIRECT_HOME;
     HomingConfig.velocity = 5000.0f;
@@ -360,8 +108,20 @@ void AxisControl::disableDriver() {
     setState(&Disabled);
 }
 
-bool AxisControl::moveRelative(float distance, float vel, float acc, float dec) {
-    if (currentState != &Standstill && currentState != &DiscreteMotion) return false;
+void AxisControl::emergencyStop() {
+    MotionPlanner.hard_stop_profile();
+    pulseDriver.setCounterPulse(pulseDriver.getCounterPulse());
+    enable = false;
+    Hardware->setEnable(true);
+    error_id = EMERGENCY_STOP;
+    setState(&StateError);
+}
+
+
+void AxisControl::moveRelative(float distance, float vel, float acc, float dec) {
+    if (currentState != &Standstill && currentState != &DiscreteMotion) return;
+    if (!std::isfinite(distance) || !validDynamics(vel, acc, dec)) return;
+
     move_done = false;
     moveSettings.distance = MotionPlanner.getPosition() + distance;
     moveSettings.velocity = vel;
@@ -369,11 +129,12 @@ bool AxisControl::moveRelative(float distance, float vel, float acc, float dec) 
     moveSettings.deceleration = dec;
     MotionPlanner.setPosition(moveSettings.distance);
     setState(&DiscreteMotion);
-    return true;
 }
 
-bool AxisControl::moveAbsolute(float pos, float vel, float acc, float dec) {
-    if (currentState != &Standstill && currentState != &DiscreteMotion) return false;
+void AxisControl::moveAbsolute(float pos, float vel, float acc, float dec) {
+    if (currentState != &Standstill && currentState != &DiscreteMotion) return;
+    if (!std::isfinite(pos) || !validDynamics(vel, acc, dec)) return;
+
     move_done = false;
     moveSettings.distance = pos;
     moveSettings.velocity = vel;
@@ -381,36 +142,40 @@ bool AxisControl::moveAbsolute(float pos, float vel, float acc, float dec) {
     moveSettings.deceleration = dec;
    // MotionPlanner.setPosition(moveSettings.distance);
     setState(&DiscreteMotion);
-    return true;
 }
 
-bool AxisControl::moveVelocity(float vel, float acc, DIRECTION dir) {
-    if (currentState != &Standstill && currentState != &ContinueMotion && currentState != &Stopping) return false;
+void AxisControl::moveVelocity(float vel, float acc, DIRECTION dir) {
+    if (currentState != &Standstill && currentState != &ContinueMotion && currentState != &Stopping) return;
+    if (!std::isfinite(vel) || !std::isfinite(acc)) return;
+    if (vel <= 0.0f || acc <= 0.0f) return;
+    if (dir != NEGATIVE && dir != POSITIVE) return;
+
     move_done = false;
     moveSettings.velocity = vel;
     moveSettings.acceleration = acc;
     moveSettings.direction = dir;
 
     setState(&ContinueMotion);
-    return true;
 }
 
-bool AxisControl::moveHome(float pos, float vel, float acc, float dec, HOMING_MODE mode) {
-    if (currentState != &Standstill) return false;
-    isHomingEnabled = false;
+void AxisControl::moveHome(float pos, float vel, float acc, float dec, HOMING_MODE mode) {
+    if (currentState != &Standstill) return;
+    if (!std::isfinite(pos) || !validDynamics(vel, acc, dec)) return;
 
+    isHomingEnabled = false;
     HomingConfig.position_offset = pos;
     HomingConfig.timeout = 10;
     HomingConfig.mode = mode;
     HomingConfig.velocity = vel;
     HomingConfig.crowl_velocity = vel / 2.0f;
     HomingConfig.acceleration = acc;
+    HomingConfig.deceleration = dec;
     setState(&Homing);
-    return true;
 }
 
 bool AxisControl::stopping(float deceleration) {
     if (currentState != &ContinueMotion && currentState != &DiscreteMotion && currentState != &Homing) return false;
+    if (!std::isfinite(deceleration)) return false;
 
     moveSettings.deceleration = deceleration;
     setState(&Stopping);
@@ -418,15 +183,12 @@ bool AxisControl::stopping(float deceleration) {
 }
 
 void AxisControl::resetPosition(float pos) {
-    // float min_p = this->SoftwareLimit.minPosition;
-    // float max_p = this->SoftwareLimit.maxPosition;
-    //float position = std::clamp(pos, min_p, max_p);
+    if (!std::isfinite(pos)) return;
+    if (MotionPlanner.inMotion()) return;
 
     auto _pos = static_cast<int32_t>(pos);
-
     this->MotionPlanner.setCurrentPosition(pos);
     this->pulseDriver.setCounterPulse(_pos);
-   // if (encoder) encoder->setCurrentPosition(_pos);
 }
 
 int32_t AxisControl::getPositionFeedback() const {
@@ -434,14 +196,8 @@ int32_t AxisControl::getPositionFeedback() const {
 }
 
 float AxisControl::getLagError() const{
-    int32_t lagError = 0;
-    auto position = static_cast<int32_t>(MotionPlanner.getPosition());
-    // if (!encoder) {
-    //     lagError = position - pulseDriver.getCounterPulse();
-    // }else {
-    //     lagError = position - getPositionFeedback();
-    // }
-    lagError = position - pulseDriver.getCounterPulse();
+    int32_t lagError{0};
+    lagError = MotionPlanner.getPositionSteps() - pulseDriver.getCounterPulse();
     return lagError;
 }
 
@@ -551,6 +307,4 @@ uint8_t AxisControl::getErrorID() const {
     return  error_id;
 }
 
-
-///////////////////////////////////////////////////////////////////////////////////
 

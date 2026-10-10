@@ -2,16 +2,16 @@
 #define UNTITLED3_AXISCONTROLLER_HPP
 #include "MotionProfile.hpp"
 #include "PulseGenerator.hpp"
+#include "../include/AxisHardware.hpp"
+
 
 enum ERROR_ID : uint8_t {
-    NO_ERROR                = 0,
-    DRIVE_OVERLOAD          = 1,
-    HARDWARE_NEG_LS_ACTIVE  = 2,
-    HARDWARE_POS_LS_ACTIVE  = 3,
-    SOFTWARE_NEG_LS_ACTIVE  = 4,
-    SOFTWARE_POS_LS_ACTIVE  = 5,
-    HOMING_TIMEOUT          = 6,
-    STALL_DETECTED          = 7
+    NO_ERROR,
+    EMERGENCY_STOP,
+    DRIVE_OVERLOAD,
+    HARDWARE_NEG_LS_ACTIVE,
+    HARDWARE_POS_LS_ACTIVE,
+    HOMING_TIMEOUT
 };
 
 enum HOMING_MODE : int8_t {
@@ -40,6 +40,7 @@ enum HOMING_MODE : int8_t {
         float velocity{0.0f};
         float crowl_velocity{0.0f};
         float acceleration{0.0f};
+        float deceleration{0.0f};
         float position_offset{0.0f};
         uint8_t timeout{0};
     };
@@ -144,10 +145,11 @@ public:
     void recover();
     void enableDriver();
     void disableDriver();
-    bool moveRelative(float distance, float vel, float acc, float dec);
-    bool moveAbsolute(float pos, float vel, float acc, float dec);
-    bool moveVelocity(float vel, float acc, DIRECTION dir = DIRECTION::POSITIVE);
-    bool moveHome(float pos, float vel, float acc, float dec, HOMING_MODE mode = HOMING_MODE::DIRECT_HOME);
+    void emergencyStop();
+    void moveRelative(float distance, float vel, float acc, float dec);
+    void moveAbsolute(float pos, float vel, float acc, float dec);
+    void moveVelocity(float vel, float acc, DIRECTION dir = POSITIVE);
+    void moveHome(float pos, float vel, float acc, float dec, HOMING_MODE mode = DIRECT_HOME);
     void setSoftwareLimit(const AxisSoftwareLimit& limit);
     void setHomingConfig(const AxisHomingConfig& conf);
     bool stopping(float deceleration);
@@ -180,7 +182,6 @@ public:
 
 private:
     bool handleDriveFault();
-   // bool hasStallCondition();
     bool isTargetOutOfBounds();
     bool isBrakingBoundaryViolated();
     bool isHardwareLimitTriggered();
@@ -195,19 +196,16 @@ private:
     static ErrorState StateError;
 
     uint8_t axisId{0};
-    //AxisSoftwareLimit SoftwareLimit{};
     AxisLimitSwitch* LimitSwitch{};
     AxisHomingConfig HomingConfig{};
     AxisHardware* Hardware;
     AxisStateId stateId{AxisStateId::DISABLED};
     AxisState* currentState;
 
-
     MotionProfile::TrapezoidalProfile MotionPlanner;
     PulseDriver pulseDriver;
 
     float ct{0.0f};
-
     bool invertDirection{false};
     bool enable{false};
     bool reset{false};

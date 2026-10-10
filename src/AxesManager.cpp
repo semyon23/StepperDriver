@@ -81,7 +81,7 @@ void AxesManager::moveVelocity(const CommandData *data) {
 void AxesManager::moveHome(const CommandData *data) {
     forEachTarget(data, [&](AxisControl &axis, size_t idx) {
         auto mode = static_cast<HOMING_MODE>(data->direction[idx]);
-        axis.moveHome(data->position[idx], data->velocity, data->acceleration, data->deceleration, mode);
+        axis.moveHome(data->position[idx], data->velocity, data->acceleration, data->acceleration, mode);
     });
 }
 
@@ -97,6 +97,14 @@ void AxesManager::recoverAxes(const CommandData *data) {
         axis->recover();
     }
 }
+
+void AxesManager::hardStop(const CommandData *data) {
+    if (!checkTransaction(data->transaction_id)) return;
+    for (auto axis : axes) {
+        axis->emergencyStop();
+    }
+}
+
 
 void AxesManager::setCurrentPositions(const CommandData *data) {
     forEachTarget(data, [&](AxisControl& axis, size_t i) {

@@ -16,6 +16,7 @@ class AxesManager {
 public:
     AxesManager(AxisControl* x, AxisControl* y, AxisControl* c);
     void recoverAxes(const CommandData *data);
+    void hardStop(const CommandData *data);
     void powerEnable(const CommandData *data);
     void moveAbsolute(const CommandData *data);
     void moveRelative(const CommandData *data);
