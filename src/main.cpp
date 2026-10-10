@@ -159,9 +159,8 @@ void setup() {
     EEPROM.begin();
 
     auto Id = loadID();
-    protocolHandler.changeId(Id);
+    protocolHandler.setId(Id);
 
-    //MT6835.init();
     hwX.init();
     hwY.init();
     hwC.init();
@@ -314,33 +313,6 @@ void registerCommands() {
         protocolHandler.sendFrame(rawPkg, pkgSize);
     });
 
-    CmdManager.addCommand(COMMAND::SET_HOMING, [&](const uint8_t* data, size_t len) {
-        if (data == nullptr || len != sizeof(AxisHomingConfig) * MAX_NUMBER_DEVICE) {
-            // auto pkg = protocolHandler.createFrame(COMMAND::SET_HOMING, CommandAck{0});
-            // protocolHandler.sendFrame(reinterpret_cast<uint8_t*>(&pkg), sizeof(pkg));
-            return;
-        }
-        const auto* conf = reinterpret_cast<const AxisHomingConfig*>(data);
-        Controller.setHomingConfig(conf);
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::SET_HOMING, status);
-        protocolHandler.sendFrame(reinterpret_cast<uint8_t*>(&pkg), sizeof(pkg));
-    });
-
-    CmdManager.addCommand(COMMAND::SET_LIMITS, [&](const uint8_t* data, size_t len) {
-        if (data == nullptr || len != sizeof(AxisSoftwareLimit) * 3) {
-            // auto pkg = protocolHandler.createFrame(COMMAND::SET_LIMITS, CommandAck{0});
-            // protocolHandler.sendFrame(reinterpret_cast<uint8_t*>(&pkg), sizeof(pkg));
-            return;
-        }
-        const auto* Limits = reinterpret_cast<const AxisSoftwareLimit*>(data);
-        Controller.setAxisSoftwareLimit(Limits);
-        auto status = Controller.getAxesInfo();
-        auto pkg = protocolHandler.createFrame(COMMAND::SET_LIMITS, status);
-        protocolHandler.sendFrame(reinterpret_cast<uint8_t*>(&pkg), sizeof(pkg));
-    });
-
     CmdManager.addCommand(COMMAND::CHANGE_ID_DEVICE, [&](const uint8_t* data, size_t len) {
         if (data == nullptr || len != 1) return;
 
@@ -352,10 +324,9 @@ void registerCommands() {
         size_t pkgSize = sizeof(pkg);
         protocolHandler.sendFrame(rawPkg, pkgSize);
         if (protocolHandler.getId() != newId) {
-            protocolHandler.changeId(newId);
+            protocolHandler.setId(newId);
             saveID(newId);
         }
-
     });
 
     CmdManager.addCommand(COMMAND::JUMP_TO_BOOTLOADER, [&](const uint8_t* data, size_t len) {

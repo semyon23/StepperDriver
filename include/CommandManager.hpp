@@ -111,7 +111,7 @@ public:
     ProtocolHandler(CommandManager* cmdMgr, uint8_t ID);
     void processReadByte(uint8_t byte);
     void sendFrame(const uint8_t *data, size_t len);
-    void changeId(uint8_t id);
+    void setId(uint8_t id);
     uint8_t getId() const;
     template <typename T>
     SerialFrame<T> createFrame(uint8_t cmdId, const T& data) {

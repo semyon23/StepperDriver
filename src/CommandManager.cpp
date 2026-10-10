@@ -17,14 +17,13 @@ void CommandManager::addCommand(uint8_t id_cmd, CommandCallback cmd) {
 }
 
 ProtocolHandler::ProtocolHandler(CommandManager* cmdMgr, uint8_t id)
-    : _cmdMgr(cmdMgr), _id(id)
-{
-    commandBuffer.fill(0);
+    : _cmdMgr(cmdMgr), _id(id){
     _bytesRead = 0;
     pinMode(PB5, OUTPUT);
+    digitalWrite(PB5, LOW);
 }
 
-void ProtocolHandler::changeId(uint8_t id) {
+void ProtocolHandler::setId(uint8_t id) {
     _id = id;
 }
 
@@ -45,10 +44,9 @@ void ProtocolHandler::processReadByte(uint8_t byte) {
         return;
     }
     commandBuffer[_bytesRead++] = byte;
-
     if (_bytesRead > 3) {
         uint8_t dataLen = commandBuffer[3];
-        size_t totalFrameSize = 6 + dataLen;
+        size_t totalFrameSize = FRAME_OVERHEAD + dataLen;
 
         if (_bytesRead == totalFrameSize) {
             if (byte == FOOTER) {
@@ -88,7 +86,7 @@ void ProtocolHandler::sendFrame(const uint8_t *data, size_t len) {
     digitalWrite(PB5, HIGH);
     Serial1.write(data, len);
     Serial1.flush();
-    delayMicroseconds(5);
+    delayMicroseconds(20);
     digitalWrite(PB5, LOW);
 }
 

@@ -23,12 +23,14 @@ public:
     void moveHome(const CommandData *data);
     void haltMove(const CommandData *data);
     void setCurrentPositions(const CommandData *data);
-    void setAxisSoftwareLimit(const AxisSoftwareLimit *data);
-    void setHomingConfig(const AxisHomingConfig *data);
 
     StatusData getAxesInfo();
     FeedbackData getAxesFeedback();
 private:
+    template <typename Fn>
+    void forEachTarget(const CommandData* data, Fn&& fn);
+    bool checkTransaction(uint32_t transaction_id);
+
     TargetDynamics prepareInterpolatedMotion(uint8_t cmdId, const CommandData *data);
     std::array<AxisControl*, MAX_NUMBER_DEVICE> axes;
 
