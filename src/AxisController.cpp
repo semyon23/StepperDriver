@@ -59,40 +59,28 @@ MotionProfile::TrapezoidalProfile &AxisControl::getPlanner() {
 
 void AxisControl::setState(AxisState* nextState) {
     if (!nextState) return;
-
-    if (currentState != nextState) {
-        if (currentState) {
-            currentState->cleanup(this);
-        }
-        currentState = nextState;
-        currentState->setup(this);
-    }
-    else {
-        if (currentState) currentState->setup(this);
-    }
+    if (currentState != nextState) currentState->cleanup(this);
+    nextState->setup(this);
+    currentState = nextState;
 }
 
 void AxisControl::update() {
-    // if (encoder != nullptr) {
-    //     positionFeedback = encoder->updateFeedback();
-    //     velocityFeedback = encoder->velocityFeedback(ct);
-    // }else {
-    //     positionFeedback = static_cast<int32_t>(MotionPlanner.getPosition());
-    //     velocityFeedback = MotionPlanner.getVelocity();
+    if (currentState != &Disabled && currentState != &StateError && handleDriveFault()) {
+        setState(&StateError);
+    }
+    // if (motionStateActive() && isHardwareLimitTriggered()) {   // см. 1.6
+    //     MotionPlanner.hard_stop_profile();
+    //     setState(&StateError);
     // }
+    currentState->action(this);
+    MotionPlanner.run();
+    pulseDriver.setTargetSteps(MotionPlanner.getPositionSteps());
     positionFeedback = static_cast<int32_t>(MotionPlanner.getPosition());
     velocityFeedback = MotionPlanner.getVelocity();
-
-    MotionPlanner.run();
-
-    //pulseDriver.setStepRate(MotionPlanner.getVelocity() * (invertDirection ? -1 : 1));
-    pulseDriver.setTargetSteps(MotionPlanner.getPositionSteps());
-    currentState->action(this);
 }
 
 void AxisControl::recover() {
     if (currentState != &StateError) return;
-
     reset = true;
 }
 
@@ -116,7 +104,6 @@ void AxisControl::emergencyStop() {
     error_id = EMERGENCY_STOP;
     setState(&StateError);
 }
-
 
 void AxisControl::moveRelative(float distance, float vel, float acc, float dec) {
     if (currentState != &Standstill && currentState != &DiscreteMotion) return;
@@ -186,9 +173,8 @@ void AxisControl::resetPosition(float pos) {
     if (!std::isfinite(pos)) return;
     if (MotionPlanner.inMotion()) return;
 
-    auto _pos = static_cast<int32_t>(pos);
-    this->MotionPlanner.setCurrentPosition(pos);
-    this->pulseDriver.setCounterPulse(_pos);
+    MotionPlanner.setCurrentPosition(pos);
+    pulseDriver.setCounterPulse(MotionPlanner.getPositionSteps());
 }
 
 int32_t AxisControl::getPositionFeedback() const {
@@ -196,9 +182,7 @@ int32_t AxisControl::getPositionFeedback() const {
 }
 
 float AxisControl::getLagError() const{
-    int32_t lagError{0};
-    lagError = MotionPlanner.getPositionSteps() - pulseDriver.getCounterPulse();
-    return lagError;
+    return static_cast<float>(MotionPlanner.getPositionSteps() - pulseDriver.getCounterPulse());
 }
 
 bool AxisControl::negativeLimitSwitchActive() const {

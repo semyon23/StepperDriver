@@ -1,5 +1,6 @@
 #include "../include/AxesManager.hpp"
 #include "../include/AxisHardware.hpp"
+#include "../include/ControlLock.h"
 #include <EEPROM.h>
 //sudo dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D "/home/ktc/pio_project/firmware.bin"
 //sudo dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D "/home/ktc/pio_project/firmware.bin"
@@ -186,167 +187,259 @@ void loop() {
         limitsSwitch[2].positive = digitalRead(pin_posC);
     }
 }
+template <typename T>
+void reply(COMMAND::ID id, const T& data) {
+    auto pkg = protocolHandler.createFrame(id, data);
+    protocolHandler.sendFrame(reinterpret_cast<uint8_t*>(&pkg), sizeof(pkg));
+}
+
+template <void (AxesManager::*Action)(const CommandData*)>
+    void axesCommand(COMMAND::ID id, const uint8_t* data, size_t len) {
+    if (len < sizeof(CommandData)) return;
+    CommandData cmd;
+    memcpy(&cmd, data, sizeof(cmd));
+    StatusData status;
+    {
+        ControlLock lock;
+        (Controller.*Action)(&cmd);
+        status = Controller.getAxesInfo();
+    }
+    reply(id, status);
+}
 
 void registerCommands() {
+    CmdManager.addCommand(COMMAND::POWER_ENABLE,   [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::powerEnable>(COMMAND::POWER_ENABLE, d, n); });
+    CmdManager.addCommand(COMMAND::MOVE_ABSOLUTE,  [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::moveAbsolute>(COMMAND::MOVE_ABSOLUTE, d, n); });
+    CmdManager.addCommand(COMMAND::MOVE_RELATIVE,  [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::moveRelative>(COMMAND::MOVE_RELATIVE, d, n); });
+    CmdManager.addCommand(COMMAND::MOVE_CONTINUE,  [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::moveVelocity>(COMMAND::MOVE_CONTINUE, d, n); });
+    CmdManager.addCommand(COMMAND::MOVE_HOME,      [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::moveHome>(COMMAND::MOVE_HOME, d, n); });
+    CmdManager.addCommand(COMMAND::HALT,           [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::haltMove>(COMMAND::HALT, d, n); });
+    CmdManager.addCommand(COMMAND::EMERGENCY_STOP, [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::hardStop>(COMMAND::EMERGENCY_STOP, d, n); });
+    CmdManager.addCommand(COMMAND::SET_POSITION,   [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::setCurrentPositions>(COMMAND::SET_POSITION, d, n); });
+    CmdManager.addCommand(COMMAND::RESET_ERROR,    [](const uint8_t* d, size_t n)
+        { axesCommand<&AxesManager::recoverAxes>(COMMAND::RESET_ERROR, d, n); });
 
-    CmdManager.addCommand(COMMAND::POWER_ENABLE, [&](const uint8_t* data, size_t len) {
-        if (len < sizeof(CommandData)) return;
-        auto* cmd = reinterpret_cast<const CommandData*>(data);
-        Controller.powerEnable(cmd);
-
-        auto status = Controller.getAxesInfo();
-        auto pkg = protocolHandler.createFrame(COMMAND::POWER_ENABLE, status);
-        auto* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
+    CmdManager.addCommand(COMMAND::GET_STATUS, [](const uint8_t*, size_t n) {
+        if (n < 1) return;
+        StatusData s;
+        { ControlLock lock; s = Controller.getAxesInfo(); }
+        reply(COMMAND::GET_STATUS, s);
+    });
+    CmdManager.addCommand(COMMAND::GET_FEEDBACK, [](const uint8_t*, size_t n) {
+        if (n < 1) return;
+        FeedbackData f;
+        { ControlLock lock; f = Controller.getAxesFeedback(); }
+        reply(COMMAND::GET_FEEDBACK, f);
     });
 
-    CmdManager.addCommand(COMMAND::MOVE_ABSOLUTE, [&](const uint8_t* data, size_t len) {
-        if (len < sizeof(CommandData)) return;
-        auto* cmd = reinterpret_cast<const CommandData*>(data);
-        Controller.moveAbsolute(cmd);
+     CmdManager.addCommand(COMMAND::CHANGE_ID_DEVICE, [&](const uint8_t* data, size_t len) {
+         if (data == nullptr || len != 1) return;
 
-        auto status = Controller.getAxesInfo();
+         uint8_t newId = data[0];
+         auto status = Controller.getAxesInfo();
 
-        auto pkg = protocolHandler.createFrame(COMMAND::MOVE_ABSOLUTE, status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
+         auto pkg = protocolHandler.createFrame(COMMAND::CHANGE_ID_DEVICE,  status);
+         uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+         size_t pkgSize = sizeof(pkg);
+         protocolHandler.sendFrame(rawPkg, pkgSize);
+         if (protocolHandler.getId() != newId) {
+             protocolHandler.setId(newId);
+             saveID(newId);
+         }
+     });
+
+     CmdManager.addCommand(COMMAND::JUMP_TO_BOOTLOADER, [&](const uint8_t* data, size_t len) {
+         jumpToBootloader();
     });
 
-    CmdManager.addCommand(COMMAND::MOVE_RELATIVE, [&](const uint8_t* data, size_t len) {
-        if (len < sizeof(CommandData)) return;
-        auto* cmd = reinterpret_cast<const CommandData*>(data);
-        Controller.moveRelative(cmd);
-
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::MOVE_RELATIVE, status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-    });
-
-    CmdManager.addCommand(COMMAND::MOVE_CONTINUE, [&](const uint8_t* data, size_t len) {
-        if (len < sizeof(CommandData)) return;
-        auto* cmd = reinterpret_cast<const CommandData*>(data);
-        Controller.moveVelocity(cmd);
-
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::MOVE_CONTINUE, status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-    });
-
-    CmdManager.addCommand(COMMAND::MOVE_HOME, [&](const uint8_t* data, size_t len) {
-        if (len < sizeof(CommandData)) return;
-        auto* cmd = reinterpret_cast<const CommandData*>(data);
-        Controller.moveHome(cmd);
-
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::MOVE_HOME, status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-    });
-
-    CmdManager.addCommand(COMMAND::HALT, [&](const uint8_t* data, size_t len) {
-        if (len < sizeof(CommandData)) return;
-        auto* cmd = reinterpret_cast<const CommandData*>(data);
-        Controller.haltMove(cmd);
-
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::HALT, status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-    });
-
-    CmdManager.addCommand(COMMAND::SET_POSITION, [&](const uint8_t* data, size_t len) {
-        if (len < sizeof(CommandData)) return;
-        auto* cmd = reinterpret_cast<const CommandData*>(data);
-        Controller.setCurrentPositions(cmd);
-
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::SET_POSITION, status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-    });
-
-    CmdManager.addCommand(COMMAND::GET_STATUS, [&](const uint8_t* data, size_t len) {
-        if (len < 1) return;
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::GET_STATUS, status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-    });
-
-    CmdManager.addCommand(COMMAND::RESET_ERROR, [&](const uint8_t* data, size_t len) {
-        if (len < sizeof(CommandData)) return;
-
-        auto* cmd = reinterpret_cast<const CommandData*>(data);
-        Controller.recoverAxes(cmd);
-
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::RESET_ERROR, status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-    });
-
-    CmdManager.addCommand(COMMAND::EMERGENCY_STOP, [&](const uint8_t* data, size_t len) {
-            if (len < sizeof(CommandData)) return;
-
-            auto* cmd = reinterpret_cast<const CommandData*>(data);
-            Controller.hardStop(cmd);
-            auto status = Controller.getAxesInfo();
-
-            auto pkg = protocolHandler.createFrame(COMMAND::EMERGENCY_STOP, status);
-            uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-            size_t pkgSize = sizeof(pkg);
-            protocolHandler.sendFrame(rawPkg, pkgSize);
-        });
-
-
-    CmdManager.addCommand(COMMAND::GET_FEEDBACK, [&](const uint8_t* data, size_t len) {
-        if (len < 1) return;
-        auto info = Controller.getAxesFeedback();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::GET_FEEDBACK, info);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-    });
-
-    CmdManager.addCommand(COMMAND::CHANGE_ID_DEVICE, [&](const uint8_t* data, size_t len) {
-        if (data == nullptr || len != 1) return;
-
-        uint8_t newId = data[0];
-        auto status = Controller.getAxesInfo();
-
-        auto pkg = protocolHandler.createFrame(COMMAND::CHANGE_ID_DEVICE,  status);
-        uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
-        size_t pkgSize = sizeof(pkg);
-        protocolHandler.sendFrame(rawPkg, pkgSize);
-        if (protocolHandler.getId() != newId) {
-            protocolHandler.setId(newId);
-            saveID(newId);
-        }
-    });
-
-    CmdManager.addCommand(COMMAND::JUMP_TO_BOOTLOADER, [&](const uint8_t* data, size_t len) {
-        jumpToBootloader();
-   });
 }
+
+
+
+
+   //  CmdManager.addCommand(COMMAND::POWER_ENABLE, [&](const uint8_t* data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //      // auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      CommandData cmd;
+   //      memcpy(&cmd, data, sizeof(cmd));
+   //      Controller.powerEnable(&cmd);
+   //
+   //      auto status = Controller.getAxesInfo();
+   //      auto pkg = protocolHandler.createFrame(COMMAND::POWER_ENABLE, status);
+   //      auto* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::MOVE_ABSOLUTE, [&](const uint8_t* data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //      //auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      CommandData cmd;
+   //      memcpy(&cmd, data, sizeof(cmd));
+   //      Controller.moveAbsolute(&cmd);
+   //
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::MOVE_ABSOLUTE, status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::MOVE_RELATIVE, [&](const uint8_t* data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //     // auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      CommandData cmd;
+   //      memcpy(&cmd, data, sizeof(cmd));
+   //      Controller.moveRelative(&cmd);
+   //
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::MOVE_RELATIVE, status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::MOVE_CONTINUE, [&](const uint8_t* data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //     // auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      CommandData cmd;
+   //      memcpy(&cmd, data, sizeof(cmd));
+   //      Controller.moveVelocity(&cmd);
+   //
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::MOVE_CONTINUE, status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::MOVE_HOME, [&](const uint8_t* data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //     // auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      CommandData cmd;
+   //      memcpy(&cmd, data, sizeof(cmd));
+   //      Controller.moveHome(&cmd);
+   //
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::MOVE_HOME, status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::HALT, [&](const uint8_t* data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //      //auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      CommandData cmd;
+   //      memcpy(&cmd, data, sizeof(cmd));
+   //      Controller.haltMove(&cmd);
+   //
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::HALT, status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::SET_POSITION, [&](const uint8_t* data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //      //auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      CommandData cmd;
+   //      memcpy(&cmd, data, sizeof(cmd));
+   //      Controller.setCurrentPositions(&cmd);
+   //
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::SET_POSITION, status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::GET_STATUS, [&](const uint8_t* data, size_t len) {
+   //      if (len < 1) return;
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::GET_STATUS, status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::RESET_ERROR, [&](const uint8_t* data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //
+   //      auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      Controller.recoverAxes(cmd);
+   //
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::RESET_ERROR, status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::EMERGENCY_STOP, [&](const uint8_t *data, size_t len) {
+   //      if (len < sizeof(CommandData)) return;
+   //
+   //      //auto* cmd = reinterpret_cast<const CommandData*>(data);
+   //      CommandData cmd;
+   //      memcpy(&cmd, data, sizeof(cmd));
+   //      Controller.hardStop(&cmd);
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::EMERGENCY_STOP, status);
+   //      uint8_t *rawPkg = reinterpret_cast<uint8_t *>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //
+   //  CmdManager.addCommand(COMMAND::GET_FEEDBACK, [&](const uint8_t* data, size_t len) {
+   //      if (len < 1) return;
+   //      auto info = Controller.getAxesFeedback();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::GET_FEEDBACK, info);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::CHANGE_ID_DEVICE, [&](const uint8_t* data, size_t len) {
+   //      if (data == nullptr || len != 1) return;
+   //
+   //      uint8_t newId = data[0];
+   //      auto status = Controller.getAxesInfo();
+   //
+   //      auto pkg = protocolHandler.createFrame(COMMAND::CHANGE_ID_DEVICE,  status);
+   //      uint8_t* rawPkg = reinterpret_cast<uint8_t*>(&pkg);
+   //      size_t pkgSize = sizeof(pkg);
+   //      protocolHandler.sendFrame(rawPkg, pkgSize);
+   //      if (protocolHandler.getId() != newId) {
+   //          protocolHandler.setId(newId);
+   //          saveID(newId);
+   //      }
+   //  });
+   //
+   //  CmdManager.addCommand(COMMAND::JUMP_TO_BOOTLOADER, [&](const uint8_t* data, size_t len) {
+   //      jumpToBootloader();
+   // });
+
 
 void jumpToBootloader() {
         __disable_irq();
