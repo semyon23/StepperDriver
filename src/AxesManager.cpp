@@ -99,7 +99,6 @@ void AxesManager::recoverAxes(const CommandData *data) {
 }
 
 void AxesManager::hardStop(const CommandData *data) {
-    if (!checkTransaction(data->transaction_id)) return;
     for (auto axis : axes) {
         axis->emergencyStop();
     }

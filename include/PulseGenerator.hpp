@@ -13,7 +13,8 @@ class AxisHardware;
 class PulseDriver {
 public:
     PulseDriver(AxisHardware* hw, float tickPeriod, float cycleTime, bool invertDir = false);
-    void run();                                // TIM3, каждый тик (50 кГц)
+    void run();
+    void stop();
     void handleStepLow();                      // TIM3 compare, середина тика
     int32_t getCounterPulse() const;
     int32_t getTargetSteps() const;

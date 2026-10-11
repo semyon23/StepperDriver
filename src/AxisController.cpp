@@ -92,17 +92,31 @@ void AxisControl::enableDriver() {
 
 void AxisControl::disableDriver() {
     enable = false;
-    if (currentState != &Standstill) return;
-    setState(&Disabled);
+    if (currentState == &Standstill) {
+        setState(&Disabled);
+    } else if (currentState == &DiscreteMotion || currentState == &ContinueMotion || currentState == &Homing) {
+        moveSettings.deceleration = 1000;
+        setState(&Stopping);
+    }
 }
 
 void AxisControl::emergencyStop() {
-    MotionPlanner.hard_stop_profile();
-    pulseDriver.setCounterPulse(pulseDriver.getCounterPulse());
-    enable = false;
     Hardware->setEnable(true);
+    MotionPlanner.hard_stop_profile();
+    pulseDriver.stop();
+    MotionPlanner.setCurrentPosition(pulseDriver.getCounterPulse());
+    enable = false;
+    isHomingEnabled = false;
     error_id = EMERGENCY_STOP;
     setState(&StateError);
+
+    //
+    // MotionPlanner.hard_stop_profile();
+    // pulseDriver.setCounterPulse(pulseDriver.getCounterPulse());
+    // enable = false;
+    // Hardware->setEnable(true);
+    // error_id = EMERGENCY_STOP;
+    // setState(&StateError);
 }
 
 void AxisControl::moveRelative(float distance, float vel, float acc, float dec) {

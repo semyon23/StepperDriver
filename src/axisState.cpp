@@ -15,7 +15,7 @@ void DisabledState::action(AxisControl* axis) {
     axis->Hardware->setEnable(true);
 }
 void DisabledState::setup(AxisControl *axis) {
-
+    axis->Hardware->setEnable(true);
 }
 
 ////=========DiscreteMotion============================
@@ -120,7 +120,11 @@ void StoppingState::action(AxisControl* axis) {
         axis->setState(&AxisControl::StateError);
     }else if (!axis->getPlanner().inMotion()) {
         axis->move_done = true;
-        axis->setState(&AxisControl::Standstill);
+        if (axis->enable) {
+            axis->setState(&AxisControl::Standstill);
+        } else {
+            axis->setState(&AxisControl::Disabled);
+        }
     }else {
         axis->stateId = AxisStateId::STOPPING;
     }
@@ -237,8 +241,10 @@ void ErrorState::cleanup(AxisControl *axis) {
 
 ////=========Standstill==========================
 void StandstillState::action(AxisControl *axis) {
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
+
+    if (!axis->enable) {
+        axis->setState(&AxisControl::Disabled);
+        return;
     }else {
         axis->stateId = AxisStateId::STANDSTILL;
     }

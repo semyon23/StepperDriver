@@ -25,9 +25,20 @@ void PulseDriver::handleStepLow() {
 
 
 void PulseDriver::setCounterPulse(const int32_t pulse) {
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
     counterPulse = pulse;
     targetSteps = pulse;
     stepsThisCycle = 0;
+    __set_PRIMASK(primask);
+}
+
+void PulseDriver::stop() {
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    targetSteps = counterPulse;
+    stepsThisCycle = 0;
+    __set_PRIMASK(primask);
 }
 
 
