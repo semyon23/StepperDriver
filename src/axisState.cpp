@@ -54,18 +54,12 @@ void DiscreteMotionState::setup(AxisControl *axis) {
 
 void DiscreteMotionState::action(AxisControl* axis) {
 
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    } else if (axis->isHardwareLimitTriggered()) {
+    if (axis->isHardwareLimitTriggered()) {
         axis->getPlanner().hard_stop_profile();
         axis->setState(&AxisControl::StateError);
     } else if (!axis->getPlanner().inMotion() && axis->isTargetReached()) {
-        if (axis->isTargetOutOfBounds()) {
-            axis->setState(&AxisControl::StateError);
-        }else {
-            axis->move_done = true;
-            axis->setState(&AxisControl::Standstill);
-        }
+        axis->move_done = true;
+        axis->setState(&AxisControl::Standstill);
     }else {
         axis->stateId = AxisStateId::DISCRETE_MOTION;
     }
@@ -93,9 +87,7 @@ void ContinueMotionState::setup(AxisControl *axis) {
 
 void ContinueMotionState::action(AxisControl* axis) {
 
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    }else if (axis->isHardwareLimitTriggered() || axis->isBrakingBoundaryViolated()) {
+    if (axis->isHardwareLimitTriggered()) {
         //axis->moveSettings.deceleration = axis->SoftwareLimit.deceleration;
         axis->moveSettings.deceleration = axis->moveSettings.acceleration ;
         axis->getPlanner().setDeceleration(axis->moveSettings.deceleration);
@@ -116,9 +108,7 @@ void StoppingState::setup(AxisControl *axis) {
 }
 
 void StoppingState::action(AxisControl* axis) {
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    }else if (!axis->getPlanner().inMotion()) {
+  if (!axis->getPlanner().inMotion()) {
         axis->move_done = true;
         if (axis->enable) {
             axis->setState(&AxisControl::Standstill);
@@ -152,24 +142,19 @@ void HomingState::setup(AxisControl *axis) {
 }
 
 void HomingState::action(AxisControl *axis) {
-
-    if (axis->handleDriveFault()) {
-        axis->setState(&AxisControl::StateError);
-    } else {
-        axis->stateId = AxisStateId::HOMING;
-    }
+    axis->stateId = AxisStateId::HOMING;
 
     auto mode = axis->HomingConfig.mode;
 
     bool sensor = false;
-    if (mode == HOMING_MODE::DIRECT_HOME) {
+    if (mode == DIRECT_HOME) {
+        axis->isHomingEnabled = true;
         axis->resetPosition(axis->HomingConfig.position_offset);
         axis->setState(&AxisControl::Standstill);
-        axis->isHomingEnabled = true;
         return;
-    } else if (mode == HOMING_MODE::NEGATIVE_LIMIT) {
+    } else if (mode == NEGATIVE_LIMIT) {
         sensor = axis->negativeLimitSwitchActive();
-    } else if (mode == HOMING_MODE::POSITIVE_LIMIT) {
+    } else if (mode == POSITIVE_LIMIT) {
         sensor = axis->positiveLimitSwitchActive();
     }
 
@@ -190,6 +175,7 @@ void HomingState::action(AxisControl *axis) {
                     axis->error_id = ERROR_ID::HOMING_TIMEOUT;
                     axis->getPlanner().hard_stop_profile();
                     axis->setState(&AxisControl::StateError);
+                    return;
                 }
             }
             break;
@@ -204,6 +190,7 @@ void HomingState::action(AxisControl *axis) {
                     axis->error_id = ERROR_ID::HOMING_TIMEOUT;
                     axis->getPlanner().hard_stop_profile();
                     axis->setState(&AxisControl::StateError);
+                    return;
                 }
             }
             break;

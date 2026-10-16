@@ -39,6 +39,15 @@ const AxisConfig config[MAX_NUMBER_DEVICE] = {
     }
 };
 
+struct FilteredLimit {
+    uint8_t negCounter = 0;
+    uint8_t posCounter = 0;
+    const uint8_t DEBOUNCE_THRESHOLD = 10;
+};
+
+FilteredLimit limitsFilter[MAX_NUMBER_DEVICE];
+
+
 AxisLimitSwitch limitsSwitch[MAX_NUMBER_DEVICE] = {
     {.negative = false, .positive = false},
     {.negative = false, .positive = false},
@@ -65,7 +74,43 @@ AxesManager Controller(&axisX, &axisY, &axisC);
 
 volatile bool readyToReadEncoder = false;
 
+constexpr PinName pin_negX = PA_0;
+constexpr PinName pin_posX = PA_4;
+
+constexpr PinName pin_negY = PA_1;
+constexpr PinName pin_posY = PB_0;
+
+constexpr PinName pin_negC = PA_2;
+constexpr PinName pin_posC = PB_4;
+
+
 void handleProfileInterrupt() {
+    // Лямбда-функция для фильтрации
+    auto applyFilter = [](bool rawValue, uint8_t &counter, const uint8_t threshold, bool &targetLimit) {
+        if (rawValue) {
+            if (counter < threshold) counter++;
+        } else {
+            if (counter > 0) counter--;
+        }
+
+        if (counter == threshold) targetLimit = true;
+        else if (counter == 0)     targetLimit = false;
+    };
+
+    // Ось X: Быстрое чтение PinName + фильтр
+    applyFilter(digitalReadFast(pin_negX), limitsFilter[0].negCounter, limitsFilter[0].DEBOUNCE_THRESHOLD, limitsSwitch[0].negative);
+    applyFilter(digitalReadFast(pin_posX), limitsFilter[0].posCounter, limitsFilter[0].DEBOUNCE_THRESHOLD, limitsSwitch[0].positive);
+
+    // Ось Y: Быстрое чтение PinName + фильтр
+    applyFilter(digitalReadFast(pin_negY), limitsFilter[1].negCounter, limitsFilter[1].DEBOUNCE_THRESHOLD, limitsSwitch[1].negative);
+    applyFilter(digitalReadFast(pin_posY), limitsFilter[1].posCounter, limitsFilter[1].DEBOUNCE_THRESHOLD, limitsSwitch[1].positive);
+
+    // Ось C: Быстрое чтение PinName + фильтр
+    applyFilter(digitalReadFast(pin_negC), limitsFilter[2].negCounter, limitsFilter[2].DEBOUNCE_THRESHOLD, limitsSwitch[2].negative);
+    applyFilter(digitalReadFast(pin_posC), limitsFilter[2].posCounter, limitsFilter[2].DEBOUNCE_THRESHOLD, limitsSwitch[2].positive);
+
+
+
     axisX.update();
     axisY.update();
     axisC.update();
@@ -84,25 +129,28 @@ void handleCompareInterrupt() {
     axisC.getPulseDriver()->handleStepLow();
 }
 
-constexpr int pin_negX = PA0;
-constexpr int pin_posX = PA4;
 
-constexpr int pin_negY = PA1;
-constexpr int pin_posY = PB0;
 
-constexpr int pin_negC = PA2;
-constexpr int pin_posC = PB4;
+
+// constexpr int pin_negX = PA0;
+// constexpr int pin_posX = PA4;
+//
+// constexpr int pin_negY = PA1;
+// constexpr int pin_posY = PB0;
+//
+// constexpr int pin_negC = PA2;
+// constexpr int pin_posC = PB4;
 
 void setupInterrupt() {
 
-    pinMode(pin_negX, INPUT);
-    pinMode(pin_posX, INPUT);
+    pinMode(pin_negX, INPUT_PULLUP);
+    pinMode(pin_posX, INPUT_PULLUP);
 
-    pinMode(pin_negY, INPUT);
-    pinMode(pin_posY, INPUT);
+    pinMode(pin_negY, INPUT_PULLUP);
+    pinMode(pin_posY, INPUT_PULLUP);
 
-    pinMode(pin_negC, INPUT);
-    pinMode(pin_posC, INPUT);
+    pinMode(pin_negC, INPUT_PULLUP);
+    pinMode(pin_posC, INPUT_PULLUP);
 
 
     NVIC_SetPriority(TIM3_IRQn, 0);
@@ -171,17 +219,17 @@ void setup() {
 void loop() {
     handleSerial(Serial1);
 
-    if (readyToReadEncoder) {
-        readyToReadEncoder = false;
-        limitsSwitch[0].negative = digitalRead(pin_negX);
-        limitsSwitch[0].positive = digitalRead(pin_posX);
-
-        limitsSwitch[1].negative = digitalRead(pin_negY);
-        limitsSwitch[1].positive = digitalRead(pin_posY);
-
-        limitsSwitch[2].negative = digitalRead(pin_negC);
-        limitsSwitch[2].positive = digitalRead(pin_posC);
-    }
+    // if (readyToReadEncoder) {
+    //     readyToReadEncoder = false;
+    //     limitsSwitch[0].negative = digitalRead(pin_negX);
+    //     limitsSwitch[0].positive = digitalRead(pin_posX);
+    //
+    //     limitsSwitch[1].negative = digitalRead(pin_negY);
+    //     limitsSwitch[1].positive = digitalRead(pin_posY);
+    //
+    //     limitsSwitch[2].negative = digitalRead(pin_negC);
+    //     limitsSwitch[2].positive = digitalRead(pin_posC);
+    // }
 }
 template <typename T>
 void reply(COMMAND::ID id, const T& data) {
@@ -259,23 +307,57 @@ void registerCommands() {
 }
 
 void jumpToBootloader() {
-        __disable_irq();
-        SysTick->CTRL = 0;
-        SysTick->LOAD = 0;
-        SysTick->VAL = 0;
+    // __disable_irq();
+    //
+    // RCC->CR |= RCC_CR_HSION;
+    // while ((RCC->CR & RCC_CR_HSIRDY) == 0);
+    //
+    // RCC->CFGR &= ~RCC_CFGR_SW;
+    // while ((RCC->CFGR & RCC_CFGR_SWS) != RCC_CFGR_SWS_HSI);
+    //
+    // // Выключаем PLL, HSE и CSS
+    // RCC->CR &= ~(RCC_CR_PLLON | RCC_CR_HSEON | RCC_CR_CSSON);
+    //з
+    // // Сбрасываем конфигурацию PLL
+    // RCC->PLLCFGR = 0x24003010; // Дефолтное значение регистра для STM32F4
+    //
+    // RCC->CFGR &= 0x00000000;
+    // RCC->CIR = 0x00000000;
+    //
+    // SysTick->CTRL = 0;
+    // SysTick->LOAD = 0;
+    // SysTick->VAL = 0;
+    //
+    // // Сброс NVIC
+    // for (int i = 0; i < 8; i++) {
+    //     NVIC->ICER[i] = 0xFFFFFFFF;
+    //     NVIC->ICPR[i] = 0xFFFFFFFF;
+    // }
+    //
+    // uint32_t bootloaderAddress = 0x1FFF0000;
+    // __set_MSP(*((__IO uint32_t *) bootloaderAddress));
+    //
+    // void (*SysMemBootloader)(void) = (void (*)(void)) (*((__IO uint32_t *) (bootloaderAddress + 4)));
+    // SysMemBootloader();
+    //
+    // while (1);
+    __disable_irq();
+    SysTick->CTRL = 0;
+    SysTick->LOAD = 0;
+    SysTick->VAL = 0;
 
-        for (int i = 0; i < 8; i++) {
-            NVIC->ICER[i] = 0xFFFFFFFF;
-            NVIC->ICPR[i] = 0xFFFFFFFF;
-        }
+    for (int i = 0; i < 8; i++) {
+        NVIC->ICER[i] = 0xFFFFFFFF;
+        NVIC->ICPR[i] = 0xFFFFFFFF;
+    }
 
-        __enable_irq();
+    __enable_irq();
 
-        uint32_t bootloaderAddress = 0x1FFF0000;
-        __set_MSP(*((__IO uint32_t*)bootloaderAddress));
+    uint32_t bootloaderAddress = 0x1FFF0000;
+    __set_MSP(*((__IO uint32_t*)bootloaderAddress));
 
-        void (*SysMemBootloader)(void) = (void (*)(void))(*((__IO uint32_t*)(bootloaderAddress + 4)));
-        SysMemBootloader();
+    void (*SysMemBootloader)(void) = (void (*)(void))(*((__IO uint32_t*)(bootloaderAddress + 4)));
+    SysMemBootloader();
 }
 
 void saveID(uint8_t id) {

@@ -86,7 +86,7 @@ void ProtocolHandler::sendFrame(const uint8_t *data, size_t len) {
     digitalWrite(PB5, HIGH);
     Serial1.write(data, len);
     Serial1.flush();
-    delayMicroseconds(20);
+    delayMicroseconds(50);
     digitalWrite(PB5, LOW);
 }
 

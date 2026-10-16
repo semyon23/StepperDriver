@@ -8,9 +8,9 @@ static bool validDynamics(float vel, float acc, float dec) {
 AxisControl::AxisControl(uint8_t id, AxisHardware* hw, AxisLimitSwitch* ls, float cycleTime, float tickRate, bool invertDir)
         :axisId(id), Hardware(hw), LimitSwitch(ls), ct(cycleTime), MotionPlanner(cycleTime),
         pulseDriver(hw,tickRate, cycleTime, invertDir),  invertDirection(invertDir) {
-    this->currentState = &Disabled;
 
-    HomingConfig.mode = HOMING_MODE::DIRECT_HOME;
+    this->currentState = &Disabled;
+    HomingConfig.mode = DIRECT_HOME;
     HomingConfig.velocity = 5000.0f;
     HomingConfig.crowl_velocity = 500.0f;
     HomingConfig.acceleration = 10000.0f;
@@ -109,78 +109,85 @@ void AxisControl::emergencyStop() {
     isHomingEnabled = false;
     error_id = EMERGENCY_STOP;
     setState(&StateError);
-
-    //
-    // MotionPlanner.hard_stop_profile();
-    // pulseDriver.setCounterPulse(pulseDriver.getCounterPulse());
-    // enable = false;
-    // Hardware->setEnable(true);
-    // error_id = EMERGENCY_STOP;
-    // setState(&StateError);
 }
 
 void AxisControl::moveRelative(float distance, float vel, float acc, float dec) {
-    if (currentState != &Standstill && currentState != &DiscreteMotion) return;
-    if (!std::isfinite(distance) || !validDynamics(vel, acc, dec)) return;
-
-    move_done = false;
-    moveSettings.distance = MotionPlanner.getPosition() + distance;
-    moveSettings.velocity = vel;
-    moveSettings.acceleration = acc;
-    moveSettings.deceleration = dec;
-    MotionPlanner.setPosition(moveSettings.distance);
-    setState(&DiscreteMotion);
+    if (currentState != &Standstill && currentState != &DiscreteMotion) {
+        error_id = INVALID_STATE;
+        setState(&StateError);
+    }else {
+        move_done = false;
+        moveSettings.distance = MotionPlanner.getPosition() + distance;
+        moveSettings.velocity = vel;
+        moveSettings.acceleration = acc;
+        moveSettings.deceleration = dec;
+        MotionPlanner.setPosition(moveSettings.distance);
+        setState(&DiscreteMotion);
+    }
 }
 
 void AxisControl::moveAbsolute(float pos, float vel, float acc, float dec) {
-    if (currentState != &Standstill && currentState != &DiscreteMotion) return;
-    if (!std::isfinite(pos) || !validDynamics(vel, acc, dec)) return;
-
-    move_done = false;
-    moveSettings.distance = pos;
-    moveSettings.velocity = vel;
-    moveSettings.acceleration = acc;
-    moveSettings.deceleration = dec;
-   // MotionPlanner.setPosition(moveSettings.distance);
-    setState(&DiscreteMotion);
+    if (currentState != &Standstill && currentState != &DiscreteMotion) {
+        error_id = INVALID_STATE;
+        setState(&StateError);
+    }else {
+        move_done = false;
+        moveSettings.distance = pos;
+        moveSettings.velocity = vel;
+        moveSettings.acceleration = acc;
+        moveSettings.deceleration = dec;
+        // MotionPlanner.setPosition(moveSettings.distance);
+        setState(&DiscreteMotion);
+    }
 }
 
 void AxisControl::moveVelocity(float vel, float acc, DIRECTION dir) {
-    if (currentState != &Standstill && currentState != &ContinueMotion && currentState != &Stopping) return;
-    if (!std::isfinite(vel) || !std::isfinite(acc)) return;
-    if (vel <= 0.0f || acc <= 0.0f) return;
-    if (dir != NEGATIVE && dir != POSITIVE) return;
-
-    move_done = false;
-    moveSettings.velocity = vel;
-    moveSettings.acceleration = acc;
-    moveSettings.direction = dir;
-
-    setState(&ContinueMotion);
+    if (currentState != &Standstill && currentState != &ContinueMotion && currentState != &Stopping) {
+        error_id = INVALID_STATE;
+        setState(&StateError);
+    }else if (!std::isfinite(vel) || !std::isfinite(acc) || vel <= 0.0f || acc <= 0.0f || (dir != NEGATIVE && dir != POSITIVE)) {
+        error_id = INVALID_DYNAMICS;
+        setState(&StateError);
+    }else {
+        move_done = false;
+        moveSettings.velocity = vel;
+        moveSettings.acceleration = acc;
+        moveSettings.direction = dir;
+        setState(&ContinueMotion);
+    }
 }
 
 void AxisControl::moveHome(float pos, float vel, float acc, float dec, HOMING_MODE mode) {
-    if (currentState != &Standstill) return;
-    if (!std::isfinite(pos) || !validDynamics(vel, acc, dec)) return;
-
-    isHomingEnabled = false;
-    HomingConfig.position_offset = pos;
-    HomingConfig.timeout = 10;
-    HomingConfig.mode = mode;
-    HomingConfig.velocity = vel;
-    HomingConfig.crowl_velocity = vel / 2.0f;
-    HomingConfig.acceleration = acc;
-    HomingConfig.deceleration = dec;
-    setState(&Homing);
+    if (currentState != &Standstill) {
+        error_id = INVALID_STATE;
+        setState(&StateError);
+    }else if (!std::isfinite(pos) || !validDynamics(vel, acc, dec)) {
+        error_id = INVALID_DYNAMICS;
+        setState(&StateError);
+    }else {
+        isHomingEnabled = false;
+        HomingConfig.position_offset = pos;
+        HomingConfig.timeout = 10;
+        HomingConfig.mode = mode;
+        HomingConfig.velocity = vel;
+        HomingConfig.crowl_velocity = vel / 2.0f;
+        HomingConfig.acceleration = acc;
+        HomingConfig.deceleration = dec;
+        setState(&Homing);
+    }
 }
 
-bool AxisControl::stopping(float deceleration) {
-    if (currentState != &ContinueMotion && currentState != &DiscreteMotion && currentState != &Homing) return false;
-    if (!std::isfinite(deceleration)) return false;
-
-    moveSettings.deceleration = deceleration;
-    setState(&Stopping);
-    return true;
+void AxisControl::stopping(float deceleration) {
+    if (currentState != &ContinueMotion && currentState != &DiscreteMotion && currentState != &Homing) {
+        error_id = INVALID_STATE;
+        setState(&StateError);
+    }else if (!std::isfinite(deceleration) || deceleration <= 0.0f ) {
+        error_id = INVALID_DYNAMICS;
+        setState(&StateError);
+    }else {
+        moveSettings.deceleration = deceleration;
+        setState(&Stopping);
+    }
 }
 
 void AxisControl::resetPosition(float pos) {
@@ -239,7 +246,7 @@ bool AxisControl::handleDriveFault() {
         getPlanner().hard_stop_profile();
         enable = false;
         Hardware->setEnable(true);
-        error_id = ERROR_ID::DRIVE_OVERLOAD;
+        error_id = DRIVE_OVERLOAD;
         return true;
     }
     return false;
@@ -251,53 +258,14 @@ bool AxisControl::isHardwareLimitTriggered() {
     bool pos_ls = positiveLimitSwitchActive();
 
     if (dir < 0.0f && neg_ls) {
-        error_id = ERROR_ID::HARDWARE_NEG_LS_ACTIVE;
+        error_id = HARDWARE_NEG_LS_ACTIVE;
         return true;
     }
 
     if (dir > 0.0f && pos_ls) {
-        error_id = ERROR_ID::HARDWARE_POS_LS_ACTIVE;
+        error_id = HARDWARE_POS_LS_ACTIVE;
         return true;
     }
-    return false;
-}
-
-bool AxisControl::isTargetOutOfBounds() {
-    // if (moveSettings.distance > SoftwareLimit.maxPosition) {
-    //     error_id = ERROR_ID::SOFTWARE_POS_LS_ACTIVE;
-    //     return true;
-    // }
-    //
-    // if (moveSettings.distance < SoftwareLimit.minPosition) {
-    //     error_id = ERROR_ID::SOFTWARE_NEG_LS_ACTIVE;
-    //     return true;
-    // }
-    return false;
-}
-
-bool AxisControl::isBrakingBoundaryViolated() {
-    // float current_pos = MotionPlanner.getPosition();
-    // float current_vel = MotionPlanner.getVelocity();
-    // float decel       = SoftwareLimit.deceleration;
-    //
-    //
-    // float braking_distance = (current_vel * current_vel) / (2.0f * decel);
-    // float discrete_padding = std::fabs(current_vel) * ct;
-    // float total_braking_dist = braking_distance + discrete_padding;
-    //
-    // if (current_vel > 0.0f && MotionPlanner.getDirectionSign() > 0.0f) {
-    //     if ((current_pos + total_braking_dist) > SoftwareLimit.maxPosition) {
-    //         error_id = ERROR_ID::SOFTWARE_POS_LS_ACTIVE;
-    //         return true;
-    //     }
-    // }
-    //
-    // if (current_vel < 0.0f && MotionPlanner.getDirectionSign() < 0.0f) {
-    //     if ((current_pos - total_braking_dist) < SoftwareLimit.minPosition) {
-    //         error_id = ERROR_ID::SOFTWARE_NEG_LS_ACTIVE;
-    //         return true;
-    //     }
-    // }
     return false;
 }
 

@@ -11,7 +11,9 @@ enum ERROR_ID : uint8_t {
     DRIVE_OVERLOAD,
     HARDWARE_NEG_LS_ACTIVE,
     HARDWARE_POS_LS_ACTIVE,
-    HOMING_TIMEOUT
+    HOMING_TIMEOUT,
+    INVALID_STATE,
+    INVALID_DYNAMICS,
 };
 
 enum HOMING_MODE : int8_t {
@@ -152,7 +154,7 @@ public:
     void moveHome(float pos, float vel, float acc, float dec, HOMING_MODE mode = DIRECT_HOME);
     void setSoftwareLimit(const AxisSoftwareLimit& limit);
     void setHomingConfig(const AxisHomingConfig& conf);
-    bool stopping(float deceleration);
+    void stopping(float deceleration);
     void resetPosition(float pos);
 
     uint8_t getAxisId() const;
@@ -182,8 +184,6 @@ public:
 
 private:
     bool handleDriveFault();
-    bool isTargetOutOfBounds();
-    bool isBrakingBoundaryViolated();
     bool isHardwareLimitTriggered();
 
 
@@ -224,7 +224,7 @@ private:
     int32_t positionFeedback{0};
     int32_t velocityFeedback{0};
     float homingStartBuffer = 0.0f;
-    ERROR_ID error_id{ERROR_ID::NO_ERROR};
+    ERROR_ID error_id{NO_ERROR};
     const float STALL_LAG_THRESHOLD = 30.0f;
 };
 #endif
